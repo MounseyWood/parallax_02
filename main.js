@@ -28,8 +28,7 @@ const layerList = [
     { image: gloss, src: './images/layer_8_1.png', zIndex: 0.5, position: { x: 0, y: 0 }, blend: 0, opacity: 1 }
 ];
 
-// Device detection
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+// Browser detection
 const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
 // Motion Controller
@@ -39,13 +38,11 @@ class MotionController {
         this.initialMotion = { x: null, y: null };
         this.isActive = false;
         this.smoothingFactor = 0.2;
-        this.permissionGranted = false;
         this.initialize();
     }
 
     async initialize() {
-        if (isIOS) {
-            // Create permission button for iOS
+        if (typeof DeviceOrientationEvent?.requestPermission === 'function' && isSafari) {
             const button = document.createElement('button');
             button.innerText = 'Enable Motion';
             button.style.cssText = `
@@ -62,34 +59,26 @@ class MotionController {
                 font-family: sans-serif;
             `;
 
-            // Only show button if permission is needed
-            if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
-                document.body.appendChild(button);
-                button.addEventListener('click', async () => {
-                    button.remove();
-                    try {
-                        const permission = await DeviceOrientationEvent.requestPermission();
-                        if (permission === 'granted') {
-                            this.permissionGranted = true;
-                            this.setupListeners();
-                        }
-                    } catch (error) {
-                        console.warn('Permission denied for motion detection');
+            document.body.appendChild(button);
+            button.addEventListener('click', async () => {
+                try {
+                    const permission = await DeviceOrientationEvent.requestPermission();
+                    if (permission === 'granted') {
+                        this.setupListeners();
                     }
-                });
-            } else {
-                // iOS device but doesn't need permission (older version)
-                this.setupListeners();
-            }
+                } catch (error) {
+                    console.warn('Motion permission denied:', error);
+                }
+                button.remove();
+            });
         } else {
-            // Non-iOS device
             this.setupListeners();
         }
     }
 
     setupListeners() {
         if ('DeviceOrientationEvent' in window) {
-            window.addEventListener('deviceorientation', this.handleDeviceOrientation.bind(this));
+            window.addEventListener('deviceorientation', this.handleDeviceOrientation.bind(this), true);
             this.isActive = true;
         }
 
@@ -102,7 +91,6 @@ class MotionController {
     handleDeviceOrientation(event) {
         if (!event.beta || !event.gamma) return;
 
-        // Initialize reference point
         if (this.initialMotion.x === null) {
             this.initialMotion = {
                 x: event.gamma,
@@ -111,12 +99,11 @@ class MotionController {
             return;
         }
 
-        // Get screen orientation
-        const orientation = window.orientation || 0;
         let x = event.gamma - this.initialMotion.x;
         let y = event.beta - this.initialMotion.y;
 
-        // Adjust for screen orientation
+        // Handle screen orientation
+        const orientation = window.orientation || 0;
         switch (orientation) {
             case 90:
                 [x, y] = [y, -x];
@@ -129,7 +116,6 @@ class MotionController {
                 break;
         }
 
-        // Apply smoothing
         this.motion.x = this.smoothValue(this.motion.x, x);
         this.motion.y = this.smoothValue(this.motion.y, y);
     }
@@ -144,7 +130,6 @@ class MotionController {
 
     getMotion() {
         if (!this.isActive) return { x: 0, y: 0 };
-        
         return {
             x: this.motion.x * 1.5,
             y: this.motion.y * 1.5
@@ -227,7 +212,6 @@ const pointerHandler = new PointerHandler();
 function setupCanvas() {
     const baseImage = layerList[0].image;
     
-    // Set canvas size based on image and viewport
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     const imageAspect = baseImage.width / baseImage.height;
@@ -268,12 +252,10 @@ function drawCanvas() {
     const rotateX = pointer.y * -0.15 + motion.y * -1.5;
     const rotateY = pointer.x * 0.15 + motion.x * 1.5;
 
-    // Apply transform
     const transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
     canvas.style.transform = transform;
     canvas.style.webkitTransform = transform;
 
-    // Draw layers
     layerList.forEach(layer => {
         layer.position = getOffset(layer);
         context.globalCompositeOperation = layer.blend || 'normal';
@@ -290,11 +272,16 @@ function drawCanvas() {
     requestAnimationFrame(drawCanvas);
 }
 
-// Prevent Safari bouncing
+// Safari-specific event handlers
+if (isSafari) {
+    document.addEventListener('gesturestart', (e) => e.preventDefault());
+    document.addEventListener('gesturechange', (e) => e.preventDefault());
+    document.addEventListener('gestureend', (e) => e.preventDefault());
+}
+
+// Prevent default touch behavior
 document.addEventListener('touchmove', (e) => {
-    if (e.touches.length > 1) {
-        e.preventDefault();
-    }
+    e.preventDefault();
 }, { passive: false });
 
 // Image loading
@@ -320,4 +307,14 @@ document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
         motionController.resetMotion();
     }
+});
+
+// Force reorientation check on Safari
+window.addEventListener('orientationchange', () => {
+    setTimeout(() => {
+        window.scrollTo(0, 0);
+        if (motionController) {
+            motionController.resetMotion();
+        }
+    }, 50);
 });

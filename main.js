@@ -1,8 +1,6 @@
 // Get reference to Canvas
 const canvas = document.getElementById('canvas');
 const context = canvas.getContext('2d');
-
-// Get reference to loading screen
 const loadingScreen = document.getElementById('loading');
 
 // Initialize loading variables
@@ -31,6 +29,167 @@ const layerList = [
   { image: gloss, src: './images/layer_8_1.png', zIndex: 0.5, position: { x: 0, y: 0 }, blend: 0, opacity: 1 }
 ];
 
+// Motion and orientation controller
+class MotionController {
+  constructor() {
+    this.motion = { x: 0, y: 0 };
+    this.calibrationOffset = { x: 0, y: 0 };
+    this.lastMotion = { x: 0, y: 0 };
+    this.smoothingFactor = 0.15;
+    this.isCalibrated = false;
+    this.initialize();
+  }
+
+  async initialize() {
+    if (typeof DeviceOrientationEvent !== 'undefined') {
+      if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          const permission = await DeviceOrientationEvent.requestPermission();
+          if (permission === 'granted') {
+            this.setupEventListeners();
+          }
+        } catch (error) {
+          console.warn('Motion access denied or error:', error);
+        }
+      } else {
+        this.setupEventListeners();
+      }
+    }
+  }
+
+  setupEventListeners() {
+    window.addEventListener('deviceorientation', this.handleDeviceOrientation.bind(this));
+    window.addEventListener('orientationchange', this.handleOrientationChange.bind(this));
+  }
+
+  handleDeviceOrientation(event) {
+    if (!this.isCalibrated) {
+      this.calibrate(event);
+      return;
+    }
+
+    const orientation = window.orientation || 0;
+    let motionX = 0;
+    let motionY = 0;
+
+    switch (orientation) {
+      case 0: // Portrait
+        motionX = event.gamma - this.calibrationOffset.x;
+        motionY = event.beta - this.calibrationOffset.y;
+        break;
+      case 90: // Landscape left
+        motionX = event.beta - this.calibrationOffset.y;
+        motionY = -event.gamma + this.calibrationOffset.x;
+        break;
+      case -90: // Landscape right
+        motionX = -event.beta + this.calibrationOffset.y;
+        motionY = event.gamma - this.calibrationOffset.x;
+        break;
+      case 180: // Upside down
+        motionX = -event.gamma + this.calibrationOffset.x;
+        motionY = -event.beta + this.calibrationOffset.y;
+        break;
+    }
+
+    // Apply smoothing
+    this.motion.x = this.smoothValue(this.lastMotion.x, motionX);
+    this.motion.y = this.smoothValue(this.lastMotion.y, motionY);
+
+    // Update last motion values
+    this.lastMotion.x = this.motion.x;
+    this.lastMotion.y = this.motion.y;
+  }
+
+  smoothValue(currentValue, newValue) {
+    return currentValue * (1 - this.smoothingFactor) + newValue * this.smoothingFactor;
+  }
+
+  calibrate(event) {
+    if (!event.beta || !event.gamma) return;
+    
+    this.calibrationOffset = {
+      x: event.gamma,
+      y: event.beta
+    };
+    this.isCalibrated = true;
+  }
+
+  handleOrientationChange() {
+    this.isCalibrated = false;
+  }
+
+  getMotion() {
+    return {
+      x: this.motion.x * 1.2, // Adjust sensitivity
+      y: this.motion.y * 1.2
+    };
+  }
+}
+
+// Initialize motion controller
+const motionController = new MotionController();
+
+// Touch and pointer handling
+class PointerHandler {
+  constructor() {
+    this.moving = false;
+    this.pointer = { x: 0, y: 0 };
+    this.pointerInitial = { x: 0, y: 0 };
+    this.setupEventListeners();
+  }
+
+  setupEventListeners() {
+    canvas.addEventListener('touchstart', this.pointerStart.bind(this));
+    canvas.addEventListener('mousedown', this.pointerStart.bind(this));
+    window.addEventListener('touchmove', this.pointerMove.bind(this));
+    window.addEventListener('mousemove', this.pointerMove.bind(this));
+    window.addEventListener('touchend', this.endGesture.bind(this));
+    window.addEventListener('mouseup', this.endGesture.bind(this));
+  }
+
+  pointerStart(event) {
+    this.moving = true;
+    if (event.type === 'touchstart') {
+      this.pointerInitial.x = event.touches[0].clientX;
+      this.pointerInitial.y = event.touches[0].clientY;
+    } else if (event.type === 'mousedown') {
+      this.pointerInitial.x = event.clientX;
+      this.pointerInitial.y = event.clientY;
+    }
+  }
+
+  pointerMove(event) {
+    event.preventDefault();
+    if (this.moving) {
+      let currentX = 0;
+      let currentY = 0;
+      if (event.type === 'touchmove') {
+        currentX = event.touches[0].clientX;
+        currentY = event.touches[0].clientY;
+      } else if (event.type === 'mousemove') {
+        currentX = event.clientX;
+        currentY = event.clientY;
+      }
+      this.pointer.x = currentX - this.pointerInitial.x;
+      this.pointer.y = currentY - this.pointerInitial.y;
+    }
+  }
+
+  endGesture() {
+    this.moving = false;
+    this.pointer.x = 0;
+    this.pointer.y = 0;
+  }
+
+  getPointer() {
+    return this.pointer;
+  }
+}
+
+// Initialize pointer handler
+const pointerHandler = new PointerHandler();
+
+// Image loading
 layerList.forEach((layer) => {
   layer.image.onload = function () {
     loadCounter++;
@@ -46,29 +205,10 @@ function hideLoading() {
   loadingScreen.classList.add('hidden');
 }
 
-function drawCanvas() {
-  context.clearRect(0, 0, canvas.width, canvas.height);
-
-  // Calculate how much the canvas should rotate
-  const rotateX = pointer.y * -0.15 + motion.y * -1.2;
-  const rotateY = pointer.x * 0.15 + motion.x * 1.2;
-
-  const transformString = `rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
-  canvas.style.transform = transformString;
-
-  // Loop through each layer and draw it to the canvas
-  layerList.forEach((layer) => {
-    layer.position = getOffset(layer);
-
-    context.globalCompositeOperation = layer.blend || 'normal';
-    context.globalAlpha = layer.opacity;
-
-    context.drawImage(layer.image, layer.position.x, layer.position.y);
-  });
-  requestAnimationFrame(drawCanvas);
-}
-
 function getOffset(layer) {
+  const pointer = pointerHandler.getPointer();
+  const motion = motionController.getMotion();
+
   const touchMultiplier = 0.1;
   const touchOffsetX = pointer.x * layer.zIndex * touchMultiplier;
   const touchOffsetY = pointer.y * layer.zIndex * touchMultiplier;
@@ -83,117 +223,26 @@ function getOffset(layer) {
   };
 }
 
-//// TOUCH AND MOUSE CONTROLS ////
-let moving = false;
-const pointerInitial = { x: 0, y: 0 };
-const pointer = { x: 0, y: 0 };
+function drawCanvas() {
+  context.clearRect(0, 0, canvas.width, canvas.height);
 
-canvas.addEventListener('touchstart', pointerStart);
-canvas.addEventListener('mousedown', pointerStart);
+  const pointer = pointerHandler.getPointer();
+  const motion = motionController.getMotion();
 
-function pointerStart(event) {
-  moving = true;
-  if (event.type === 'touchstart') {
-    pointerInitial.x = event.touches[0].clientX;
-    pointerInitial.y = event.touches[0].clientY;
-  } else if (event.type === 'mousedown') {
-    pointerInitial.x = event.clientX;
-    pointerInitial.y = event.clientY;
-  }
+  // Calculate canvas rotation
+  const rotateX = pointer.y * -0.15 + motion.y * -1.2;
+  const rotateY = pointer.x * 0.15 + motion.x * 1.2;
+
+  // Apply transform with hardware acceleration
+  canvas.style.transform = `translate3d(0,0,0) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
+
+  // Draw layers
+  layerList.forEach((layer) => {
+    layer.position = getOffset(layer);
+    context.globalCompositeOperation = layer.blend || 'normal';
+    context.globalAlpha = layer.opacity;
+    context.drawImage(layer.image, layer.position.x, layer.position.y);
+  });
+
+  requestAnimationFrame(drawCanvas);
 }
-
-window.addEventListener('touchmove', pointerMove);
-window.addEventListener('mousemove', pointerMove);
-
-function pointerMove(event) {
-  event.preventDefault();
-  if (moving) {
-    let currentX = 0;
-    let currentY = 0;
-    if (event.type === 'touchmove') {
-      currentX = event.touches[0].clientX;
-      currentY = event.touches[0].clientY;
-    } else if (event.type === 'mousemove') {
-      currentX = event.clientX;
-      currentY = event.clientY;
-    }
-    pointer.x = currentX - pointerInitial.x;
-    pointer.y = currentY - pointerInitial.y;
-  }
-}
-
-window.addEventListener('touchend', endGesture);
-window.addEventListener('mouseup', endGesture);
-
-function endGesture() {
-  moving = false;
-  pointer.x = 0;
-  pointer.y = 0;
-}
-
-//// MOTION CONTROLS ////
-const motionInitial = { x: null, y: null };
-const motion = { x: 0, y: 0 };
-
-// Request motion access for iOS
-function requestMotionAccess() {
-  if (typeof DeviceMotionEvent.requestPermission === 'function') {
-    DeviceMotionEvent.requestPermission()
-      .then((permissionState) => {
-        if (permissionState === 'granted') {
-          console.log('Motion access granted');
-          window.addEventListener('deviceorientation', handleDeviceOrientation);
-        } else {
-          console.warn('Motion access denied.');
-        }
-      })
-      .catch((err) => console.error('Permission error:', err));
-  } else {
-    // Motion permission not needed
-    console.log('Motion permission not required on this device');
-    window.addEventListener('deviceorientation', handleDeviceOrientation);
-  }
-}
-
-requestMotionAccess();
-
-function handleDeviceOrientation(event) {
-  console.log(`Orientation Data: Beta ${event.beta}, Gamma ${event.gamma}`);
-
-  if (motionInitial.x === null && motionInitial.y === null) {
-    motionInitial.x = event.beta;
-    motionInitial.y = event.gamma;
-  }
-
-  const orientation = window.orientation || 0;
-
-  switch (orientation) {
-    case 0: // Portrait
-      motion.x = event.gamma - motionInitial.y;
-      motion.y = event.beta - motionInitial.x;
-      break;
-    case 90: // Landscape (left)
-      motion.x = event.beta - motionInitial.x;
-      motion.y = -event.gamma + motionInitial.y;
-      break;
-    case -90: // Landscape (right)
-      motion.x = -event.beta + motionInitial.x;
-      motion.y = event.gamma - motionInitial.y;
-      break;
-    case 180: // Upside down
-      motion.x = -event.gamma + motionInitial.y;
-      motion.y = -event.beta + motionInitial.x;
-      break;
-    default:
-      motion.x = 0;
-      motion.y = 0;
-  }
-
-  console.log(`Motion X: ${motion.x}, Motion Y: ${motion.y}`);
-}
-
-window.addEventListener('orientationchange', () => {
-  console.log('Orientation changed, resetting motion initial values.');
-  motionInitial.x = null;
-  motionInitial.y = null;
-});

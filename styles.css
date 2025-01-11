@@ -10,13 +10,14 @@
             box-sizing: border-box;
             margin: 0;
             height: 100%;
+            width: 100%;
             background: white;
             display: flex;
             justify-content: center;
             align-items: center;
             font-family: sans-serif;
-            overflow: hidden; /* Add this */
-            touch-action: none; /* Add this */
+            overflow: hidden;
+            position: fixed; /* Add this for Edge */
         }
 
         .image-container {
@@ -25,6 +26,8 @@
             width: 100%;
             max-width: 100%;
             position: relative;
+            justify-content: center; /* Add this for Edge */
+            align-items: center; /* Add this for Edge */
         }
 
         .canvas {
@@ -33,12 +36,13 @@
             max-width: 100%;
             display: block;
             margin: auto;
-            transform-style: preserve-3d; /* Add this */
-            will-change: transform; /* Add this */
-            touch-action: none; /* Add this */
-            -webkit-touch-callout: none; /* Add this */
-            -webkit-user-select: none; /* Add this */
-            user-select: none; /* Add this */
+            transform-style: preserve-3d;
+            -webkit-transform-style: preserve-3d;
+            will-change: transform;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
         }
 
         .loading-screen {
@@ -61,13 +65,12 @@
             transition: 0.25s ease all 0.75s;
             color: #999;
             transform: translateZ(50px);
-            z-index: 1000; /* Add this */
+            z-index: 1000;
         }
 
         .loading-screen.hidden {
             visibility: hidden;
             opacity: 0;
-            pointer-events: none; /* Add this */
         }
     </style>
 </head>

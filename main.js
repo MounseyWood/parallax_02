@@ -35,35 +35,43 @@ class MotionController {
         this.initialMotion = { x: null, y: null };
         this.isActive = false;
         this.smoothingFactor = 0.2;
+        this.safariPermissionGranted = false;
         this.initialize();
     }
 
     async initialize() {
-        // Check for iOS device
         if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
-            try {
-                // Create temporary button for iOS permission
-                const button = document.createElement('button');
-                button.innerHTML = 'Enable Motion';
-                button.style.cssText = 'position:fixed;top:20px;left:20px;z-index:1000;padding:10px;';
-                document.body.appendChild(button);
+            const button = document.createElement('button');
+            button.innerHTML = 'Enable Motion';
+            button.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                z-index: 1000;
+                padding: 15px 30px;
+                background: #000;
+                color: #fff;
+                border: none;
+                border-radius: 5px;
+                font-size: 16px;
+            `;
+            
+            document.body.appendChild(button);
 
-                button.addEventListener('click', async () => {
-                    try {
-                        const permission = await DeviceOrientationEvent.requestPermission();
-                        if (permission === 'granted') {
-                            this.setupListeners();
-                            button.remove();
-                        }
-                    } catch (error) {
-                        console.warn('Motion permission error:', error);
+            button.addEventListener('click', async () => {
+                try {
+                    const permission = await DeviceOrientationEvent.requestPermission();
+                    if (permission === 'granted') {
+                        this.safariPermissionGranted = true;
+                        this.setupListeners();
+                        button.remove();
                     }
-                });
-            } catch (error) {
-                console.warn('iOS motion permission setup failed:', error);
-            }
+                } catch (error) {
+                    console.warn('Motion permission error:', error);
+                }
+            });
         } else {
-            // Non-iOS devices
             this.setupListeners();
         }
     }
@@ -128,7 +136,7 @@ class MotionController {
         if (!this.isActive) return { x: 0, y: 0 };
         
         return {
-            x: this.motion.x * 2, // Increased sensitivity
+            x: this.motion.x * 2,
             y: this.motion.y * 2
         };
     }
@@ -140,6 +148,7 @@ class PointerHandler {
         this.moving = false;
         this.pointer = { x: 0, y: 0 };
         this.pointerInitial = { x: 0, y: 0 };
+        this.lastTouch = null;
         this.setupListeners();
     }
 
@@ -170,20 +179,21 @@ class PointerHandler {
         
         let currentX, currentY;
         if (event.type === 'touchmove') {
-            currentX = event.touches[0].clientX;
-            currentY = event.touches[0].clientY;
+            const touch = event.touches[0];
+            currentX = touch.clientX;
+            currentY = touch.clientY;
+            this.lastTouch = { x: currentX, y: currentY };
         } else {
             currentX = event.clientX;
             currentY = event.clientY;
         }
 
-        this.pointer.x = currentX - this.pointerInitial.x;
-        this.pointer.y = currentY - this.pointerInitial.y;
+        this.pointer.x = (currentX - this.pointerInitial.x) * 0.5;
+        this.pointer.y = (currentY - this.pointerInitial.y) * 0.5;
     }
 
     endGesture() {
         this.moving = false;
-        // Smoothly reset pointer position
         const resetPointer = () => {
             this.pointer.x *= 0.85;
             this.pointer.y *= 0.85;
@@ -206,7 +216,37 @@ class PointerHandler {
 const motionController = new MotionController();
 const pointerHandler = new PointerHandler();
 
-// Layer offset calculation
+// Setup canvas sizing and centering
+function setupCanvas() {
+    const container = document.body;
+    
+    function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        
+        const image = layerList[0].image;
+        const scale = Math.min(
+            canvas.width / image.width,
+            canvas.height / image.height
+        );
+        
+        const centerX = (canvas.width - image.width * scale) / 2;
+        const centerY = (canvas.height - image.height * scale) / 2;
+        
+        canvas.centerOffset = {
+            x: centerX,
+            y: centerY,
+            scale: scale
+        };
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+    layerList[0].image.onload = () => {
+        resizeCanvas();
+    };
+}
+
+// Calculate layer offsets
 function getOffset(layer) {
     const pointer = pointerHandler.getPointer();
     const motion = motionController.getMotion();
@@ -227,24 +267,32 @@ function drawCanvas() {
     const motion = motionController.getMotion();
     const pointer = pointerHandler.getPointer();
 
-    // Calculate rotation with enhanced motion effect
     const rotateX = pointer.y * -0.15 + motion.y * -2;
     const rotateY = pointer.x * 0.15 + motion.x * 2;
 
-    // Apply hardware-accelerated transform
     canvas.style.transform = `perspective(1000px) translate3d(0,0,0) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
     canvas.style.webkitTransform = canvas.style.transform;
 
-    // Draw layers
     layerList.forEach(layer => {
         layer.position = getOffset(layer);
         context.globalCompositeOperation = layer.blend || 'normal';
         context.globalAlpha = layer.opacity;
-        context.drawImage(layer.image, layer.position.x, layer.position.y);
+        
+        const x = (canvas.centerOffset?.x || 0) + layer.position.x;
+        const y = (canvas.centerOffset?.y || 0) + layer.position.y;
+        const width = layer.image.width * (canvas.centerOffset?.scale || 1);
+        const height = layer.image.height * (canvas.centerOffset?.scale || 1);
+        
+        context.drawImage(layer.image, x, y, width, height);
     });
 
     requestAnimationFrame(drawCanvas);
 }
+
+// Prevent default touch behavior
+document.addEventListener('touchmove', function(event) {
+    event.preventDefault();
+}, { passive: false });
 
 // Image loading
 layerList.forEach(layer => {
@@ -252,6 +300,7 @@ layerList.forEach(layer => {
         loadCounter++;
         if (loadCounter >= layerList.length) {
             loadingScreen.classList.add('hidden');
+            setupCanvas();
             requestAnimationFrame(drawCanvas);
         }
     };
@@ -265,12 +314,6 @@ document.addEventListener('visibilitychange', () => {
     }
 });
 
-// Handle window resize
-window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-});
-
-// Initial size setup
+// Initial canvas setup
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;

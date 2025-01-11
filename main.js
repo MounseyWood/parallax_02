@@ -2,7 +2,6 @@
 const canvas = document.getElementById('canvas');
 const context = canvas.getContext('2d');
 const loadingScreen = document.getElementById('loading');
-const container = document.querySelector('.image-container');
 
 // Loading state
 let loadCounter = 0;
@@ -29,77 +28,81 @@ const layerList = [
     { image: gloss, src: './images/layer_8_1.png', zIndex: 0.5, position: { x: 0, y: 0 }, blend: 0, opacity: 1 }
 ];
 
-// Motion Controller with Safari fixes
+// Device detection
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+// Motion Controller
 class MotionController {
     constructor() {
         this.motion = { x: 0, y: 0 };
         this.initialMotion = { x: null, y: null };
         this.isActive = false;
         this.smoothingFactor = 0.2;
+        this.permissionGranted = false;
         this.initialize();
     }
 
     async initialize() {
-        // Check if it's Safari on iOS
-        const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-        const isiOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        if (isIOS) {
+            // Create permission button for iOS
+            const button = document.createElement('button');
+            button.innerText = 'Enable Motion';
+            button.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                z-index: 1001;
+                padding: 16px 24px;
+                background: black;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-family: sans-serif;
+            `;
 
-        if (isSafari && isiOS) {
-            // iOS Safari needs permission
+            // Only show button if permission is needed
             if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
-                const button = document.createElement('button');
-                button.innerHTML = 'Enable Motion';
-                button.style.cssText = `
-                    position: fixed;
-                    top: 50%;
-                    left: 50%;
-                    transform: translate(-50%, -50%);
-                    z-index: 1001;
-                    padding: 16px 24px;
-                    background: #000;
-                    color: #fff;
-                    border: none;
-                    border-radius: 8px;
-                    font-size: 16px;
-                    cursor: pointer;
-                `;
-                
                 document.body.appendChild(button);
-
                 button.addEventListener('click', async () => {
+                    button.remove();
                     try {
                         const permission = await DeviceOrientationEvent.requestPermission();
                         if (permission === 'granted') {
+                            this.permissionGranted = true;
                             this.setupListeners();
-                            button.remove();
                         }
                     } catch (error) {
-                        console.warn('Motion permission error:', error);
-                        button.remove();
+                        console.warn('Permission denied for motion detection');
                     }
                 });
             } else {
+                // iOS device but doesn't need permission (older version)
                 this.setupListeners();
             }
         } else {
-            // Non-Safari browsers
+            // Non-iOS device
             this.setupListeners();
         }
     }
 
     setupListeners() {
-        window.addEventListener('deviceorientation', this.handleDeviceOrientation.bind(this), true);
+        if ('DeviceOrientationEvent' in window) {
+            window.addEventListener('deviceorientation', this.handleDeviceOrientation.bind(this));
+            this.isActive = true;
+        }
+
         window.addEventListener('orientationchange', () => {
             this.initialMotion = { x: null, y: null };
             setTimeout(() => this.resetMotion(), 100);
         });
-
-        this.isActive = true;
     }
 
     handleDeviceOrientation(event) {
         if (!event.beta || !event.gamma) return;
 
+        // Initialize reference point
         if (this.initialMotion.x === null) {
             this.initialMotion = {
                 x: event.gamma,
@@ -108,10 +111,12 @@ class MotionController {
             return;
         }
 
+        // Get screen orientation
         const orientation = window.orientation || 0;
         let x = event.gamma - this.initialMotion.x;
         let y = event.beta - this.initialMotion.y;
 
+        // Adjust for screen orientation
         switch (orientation) {
             case 90:
                 [x, y] = [y, -x];
@@ -124,6 +129,7 @@ class MotionController {
                 break;
         }
 
+        // Apply smoothing
         this.motion.x = this.smoothValue(this.motion.x, x);
         this.motion.y = this.smoothValue(this.motion.y, y);
     }
@@ -134,11 +140,11 @@ class MotionController {
 
     resetMotion() {
         this.motion = { x: 0, y: 0 };
-        this.initialMotion = { x: null, y: null };
     }
 
     getMotion() {
         if (!this.isActive) return { x: 0, y: 0 };
+        
         return {
             x: this.motion.x * 1.5,
             y: this.motion.y * 1.5
@@ -146,7 +152,7 @@ class MotionController {
     }
 }
 
-// Updated Touch/Mouse Handler
+// Touch/Mouse Handler
 class PointerHandler {
     constructor() {
         this.moving = false;
@@ -156,25 +162,16 @@ class PointerHandler {
     }
 
     setupListeners() {
-        // Use passive: false for Safari
-        canvas.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            this.pointerStart(e);
-        }, { passive: false });
-        
+        canvas.addEventListener('touchstart', this.pointerStart.bind(this), { passive: false });
         canvas.addEventListener('mousedown', this.pointerStart.bind(this));
-        
-        window.addEventListener('touchmove', (e) => {
-            e.preventDefault();
-            this.pointerMove(e);
-        }, { passive: false });
-        
+        window.addEventListener('touchmove', this.pointerMove.bind(this), { passive: false });
         window.addEventListener('mousemove', this.pointerMove.bind(this));
         window.addEventListener('touchend', this.endGesture.bind(this));
         window.addEventListener('mouseup', this.endGesture.bind(this));
     }
 
     pointerStart(event) {
+        event.preventDefault();
         this.moving = true;
         if (event.type === 'touchstart') {
             this.pointerInitial.x = event.touches[0].clientX;
@@ -187,6 +184,7 @@ class PointerHandler {
 
     pointerMove(event) {
         if (!this.moving) return;
+        event.preventDefault();
         
         let currentX, currentY;
         if (event.type === 'touchmove') {
@@ -203,7 +201,6 @@ class PointerHandler {
 
     endGesture() {
         this.moving = false;
-        // Smooth reset
         const resetPointer = () => {
             this.pointer.x *= 0.85;
             this.pointer.y *= 0.85;
@@ -226,62 +223,27 @@ class PointerHandler {
 const motionController = new MotionController();
 const pointerHandler = new PointerHandler();
 
-// Centering and scaling function
-function updateCanvasSize() {
-    const containerRect = container.getBoundingClientRect();
+// Set up canvas sizing
+function setupCanvas() {
     const baseImage = layerList[0].image;
     
-    // Calculate scaling to fit container while maintaining aspect ratio
-    const scale = Math.min(
-        containerRect.width / baseImage.width,
-        containerRect.height / baseImage.height
-    );
-
-    const scaledWidth = baseImage.width * scale;
-    const scaledHeight = baseImage.height * scale;
-
-    // Set canvas dimensions
-    canvas.width = scaledWidth;
-    canvas.height = scaledHeight;
-
-    // Store scaling factor for drawing
-    canvas.scale = scale;
-
-    // Center the canvas
-    canvas.style.left = '50%';
-    canvas.style.top = '50%';
-    canvas.style.transform = 'translate(-50%, -50%)';
-}
-
-function drawCanvas() {
-    context.clearRect(0, 0, canvas.width, canvas.height);
-
-    const motion = motionController.getMotion();
-    const pointer = pointerHandler.getPointer();
-
-    const rotateX = pointer.y * -0.15 + motion.y * -1.5;
-    const rotateY = pointer.x * 0.15 + motion.x * 1.5;
-
-    // Apply transforms for Safari compatibility
-    canvas.style.transform = `translate(-50%, -50%) 
-        perspective(1000px) 
-        rotateX(${rotateX}deg) 
-        rotateY(${rotateY}deg)`;
-
-    layerList.forEach(layer => {
-        layer.position = getOffset(layer);
-        context.globalCompositeOperation = layer.blend || 'normal';
-        context.globalAlpha = layer.opacity;
-
-        const x = layer.position.x;
-        const y = layer.position.y;
-        const width = layer.image.width * canvas.scale;
-        const height = layer.image.height * canvas.scale;
-
-        context.drawImage(layer.image, x, y, width, height);
-    });
-
-    requestAnimationFrame(drawCanvas);
+    // Set canvas size based on image and viewport
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const imageAspect = baseImage.width / baseImage.height;
+    const viewportAspect = viewportWidth / viewportHeight;
+    
+    let width, height;
+    if (viewportAspect > imageAspect) {
+        height = viewportHeight;
+        width = height * imageAspect;
+    } else {
+        width = viewportWidth;
+        height = width / imageAspect;
+    }
+    
+    canvas.width = width;
+    canvas.height = height;
 }
 
 function getOffset(layer) {
@@ -297,9 +259,42 @@ function getOffset(layer) {
     };
 }
 
+function drawCanvas() {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+
+    const motion = motionController.getMotion();
+    const pointer = pointerHandler.getPointer();
+
+    const rotateX = pointer.y * -0.15 + motion.y * -1.5;
+    const rotateY = pointer.x * 0.15 + motion.x * 1.5;
+
+    // Apply transform
+    const transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
+    canvas.style.transform = transform;
+    canvas.style.webkitTransform = transform;
+
+    // Draw layers
+    layerList.forEach(layer => {
+        layer.position = getOffset(layer);
+        context.globalCompositeOperation = layer.blend || 'normal';
+        context.globalAlpha = layer.opacity;
+        context.drawImage(
+            layer.image,
+            layer.position.x,
+            layer.position.y,
+            canvas.width,
+            canvas.height
+        );
+    });
+
+    requestAnimationFrame(drawCanvas);
+}
+
 // Prevent Safari bouncing
 document.addEventListener('touchmove', (e) => {
-    e.preventDefault();
+    if (e.touches.length > 1) {
+        e.preventDefault();
+    }
 }, { passive: false });
 
 // Image loading
@@ -307,7 +302,7 @@ layerList.forEach(layer => {
     layer.image.onload = () => {
         loadCounter++;
         if (loadCounter >= layerList.length) {
-            updateCanvasSize();
+            setupCanvas();
             loadingScreen.classList.add('hidden');
             requestAnimationFrame(drawCanvas);
         }
@@ -317,7 +312,7 @@ layerList.forEach(layer => {
 
 // Handle window resize
 window.addEventListener('resize', () => {
-    updateCanvasSize();
+    setupCanvas();
 });
 
 // Handle visibility changes

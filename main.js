@@ -1,13 +1,12 @@
-// Get reference to Canvas
+// Initialize canvas and context
 const canvas = document.getElementById('canvas');
 const context = canvas.getContext('2d');
 const loadingScreen = document.getElementById('loading');
 
-// Initialize loading variables
-let loaded = false;
+// Loading state
 let loadCounter = 0;
 
-// Initialize images for layers
+// Layer images
 const background = new Image();
 const didot = new Image();
 const shadow = new Image();
@@ -17,232 +16,261 @@ const title = new Image();
 const frame = new Image();
 const gloss = new Image();
 
-// Create a list of layer objects
+// Layer configuration
 const layerList = [
-  { image: background, src: './images/layer_1_1.png', zIndex: -5, position: { x: 0, y: 0 }, blend: 0, opacity: 1 },
-  { image: didot, src: './images/layer_2_1.png', zIndex: -4, position: { x: 0, y: 0 }, blend: 0, opacity: 1 },
-  { image: shadow, src: './images/layer_3_1.png', zIndex: -3, position: { x: 0, y: 0 }, blend: 'multiply', opacity: 0.5 },
-  { image: man, src: './images/layer_4_1.png', zIndex: -2, position: { x: 0, y: 0 }, blend: 0, opacity: 1 },
-  { image: headlines, src: './images/layer_5_1.png', zIndex: -0.5, position: { x: 0, y: 0 }, blend: 0, opacity: 1 },
-  { image: title, src: './images/layer_6_1.png', zIndex: -0.5, position: { x: 0, y: 0 }, blend: 0, opacity: 1 },
-  { image: frame, src: './images/layer_7_1.png', zIndex: 0, position: { x: 0, y: 0 }, blend: 0, opacity: 1 },
-  { image: gloss, src: './images/layer_8_1.png', zIndex: 0.5, position: { x: 0, y: 0 }, blend: 0, opacity: 1 }
+    { image: background, src: './images/layer_1_1.png', zIndex: -5, position: { x: 0, y: 0 }, blend: 0, opacity: 1 },
+    { image: didot, src: './images/layer_2_1.png', zIndex: -4, position: { x: 0, y: 0 }, blend: 0, opacity: 1 },
+    { image: shadow, src: './images/layer_3_1.png', zIndex: -3, position: { x: 0, y: 0 }, blend: 'multiply', opacity: 0.5 },
+    { image: man, src: './images/layer_4_1.png', zIndex: -2, position: { x: 0, y: 0 }, blend: 0, opacity: 1 },
+    { image: headlines, src: './images/layer_5_1.png', zIndex: -0.5, position: { x: 0, y: 0 }, blend: 0, opacity: 1 },
+    { image: title, src: './images/layer_6_1.png', zIndex: -0.5, position: { x: 0, y: 0 }, blend: 0, opacity: 1 },
+    { image: frame, src: './images/layer_7_1.png', zIndex: 0, position: { x: 0, y: 0 }, blend: 0, opacity: 1 },
+    { image: gloss, src: './images/layer_8_1.png', zIndex: 0.5, position: { x: 0, y: 0 }, blend: 0, opacity: 1 }
 ];
 
-// Motion and orientation controller
+// Motion Controller Class
 class MotionController {
-  constructor() {
-    this.motion = { x: 0, y: 0 };
-    this.calibrationOffset = { x: 0, y: 0 };
-    this.lastMotion = { x: 0, y: 0 };
-    this.smoothingFactor = 0.15;
-    this.isCalibrated = false;
-    this.initialize();
-  }
+    constructor() {
+        this.motion = { x: 0, y: 0 };
+        this.initialMotion = { x: null, y: null };
+        this.isActive = false;
+        this.smoothingFactor = 0.2;
+        this.initialize();
+    }
 
-  async initialize() {
-    if (typeof DeviceOrientationEvent !== 'undefined') {
-      if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-        try {
-          const permission = await DeviceOrientationEvent.requestPermission();
-          if (permission === 'granted') {
-            this.setupEventListeners();
-          }
-        } catch (error) {
-          console.warn('Motion access denied or error:', error);
+    async initialize() {
+        // Check for iOS device
+        if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
+            try {
+                // Create temporary button for iOS permission
+                const button = document.createElement('button');
+                button.innerHTML = 'Enable Motion';
+                button.style.cssText = 'position:fixed;top:20px;left:20px;z-index:1000;padding:10px;';
+                document.body.appendChild(button);
+
+                button.addEventListener('click', async () => {
+                    try {
+                        const permission = await DeviceOrientationEvent.requestPermission();
+                        if (permission === 'granted') {
+                            this.setupListeners();
+                            button.remove();
+                        }
+                    } catch (error) {
+                        console.warn('Motion permission error:', error);
+                    }
+                });
+            } catch (error) {
+                console.warn('iOS motion permission setup failed:', error);
+            }
+        } else {
+            // Non-iOS devices
+            this.setupListeners();
         }
-      } else {
-        this.setupEventListeners();
-      }
-    }
-  }
-
-  setupEventListeners() {
-    window.addEventListener('deviceorientation', this.handleDeviceOrientation.bind(this));
-    window.addEventListener('orientationchange', this.handleOrientationChange.bind(this));
-  }
-
-  handleDeviceOrientation(event) {
-    if (!this.isCalibrated) {
-      this.calibrate(event);
-      return;
     }
 
-    const orientation = window.orientation || 0;
-    let motionX = 0;
-    let motionY = 0;
+    setupListeners() {
+        if (window.DeviceOrientationEvent) {
+            window.addEventListener('deviceorientation', this.handleDeviceOrientation.bind(this));
+        }
+        
+        window.addEventListener('orientationchange', () => {
+            this.initialMotion = { x: null, y: null };
+            setTimeout(() => this.resetMotion(), 100);
+        });
 
-    switch (orientation) {
-      case 0: // Portrait
-        motionX = event.gamma - this.calibrationOffset.x;
-        motionY = event.beta - this.calibrationOffset.y;
-        break;
-      case 90: // Landscape left
-        motionX = event.beta - this.calibrationOffset.y;
-        motionY = -event.gamma + this.calibrationOffset.x;
-        break;
-      case -90: // Landscape right
-        motionX = -event.beta + this.calibrationOffset.y;
-        motionY = event.gamma - this.calibrationOffset.x;
-        break;
-      case 180: // Upside down
-        motionX = -event.gamma + this.calibrationOffset.x;
-        motionY = -event.beta + this.calibrationOffset.y;
-        break;
+        this.isActive = true;
     }
 
-    // Apply smoothing
-    this.motion.x = this.smoothValue(this.lastMotion.x, motionX);
-    this.motion.y = this.smoothValue(this.lastMotion.y, motionY);
+    handleDeviceOrientation(event) {
+        if (!event.beta || !event.gamma) return;
 
-    // Update last motion values
-    this.lastMotion.x = this.motion.x;
-    this.lastMotion.y = this.motion.y;
-  }
+        // Initialize reference point if needed
+        if (this.initialMotion.x === null) {
+            this.initialMotion = {
+                x: event.gamma,
+                y: event.beta
+            };
+            return;
+        }
 
-  smoothValue(currentValue, newValue) {
-    return currentValue * (1 - this.smoothingFactor) + newValue * this.smoothingFactor;
-  }
+        // Get the current orientation
+        const orientation = window.orientation || 0;
+        let x = event.gamma - this.initialMotion.x;
+        let y = event.beta - this.initialMotion.y;
 
-  calibrate(event) {
-    if (!event.beta || !event.gamma) return;
-    
-    this.calibrationOffset = {
-      x: event.gamma,
-      y: event.beta
-    };
-    this.isCalibrated = true;
-  }
+        // Adjust for device orientation
+        switch (orientation) {
+            case 90:
+                [x, y] = [y, -x];
+                break;
+            case -90:
+                [x, y] = [-y, x];
+                break;
+            case 180:
+                [x, y] = [-x, -y];
+                break;
+        }
 
-  handleOrientationChange() {
-    this.isCalibrated = false;
-  }
+        // Apply smoothing
+        this.motion.x = this.smoothValue(this.motion.x, x);
+        this.motion.y = this.smoothValue(this.motion.y, y);
+    }
 
-  getMotion() {
-    return {
-      x: this.motion.x * 1.2, // Adjust sensitivity
-      y: this.motion.y * 1.2
-    };
-  }
+    smoothValue(current, next) {
+        return current * (1 - this.smoothingFactor) + next * this.smoothingFactor;
+    }
+
+    resetMotion() {
+        this.motion = { x: 0, y: 0 };
+    }
+
+    getMotion() {
+        if (!this.isActive) return { x: 0, y: 0 };
+        
+        return {
+            x: this.motion.x * 2, // Increased sensitivity
+            y: this.motion.y * 2
+        };
+    }
 }
 
-// Initialize motion controller
-const motionController = new MotionController();
-
-// Touch and pointer handling
+// Touch/Mouse Handler Class
 class PointerHandler {
-  constructor() {
-    this.moving = false;
-    this.pointer = { x: 0, y: 0 };
-    this.pointerInitial = { x: 0, y: 0 };
-    this.setupEventListeners();
-  }
-
-  setupEventListeners() {
-    canvas.addEventListener('touchstart', this.pointerStart.bind(this));
-    canvas.addEventListener('mousedown', this.pointerStart.bind(this));
-    window.addEventListener('touchmove', this.pointerMove.bind(this));
-    window.addEventListener('mousemove', this.pointerMove.bind(this));
-    window.addEventListener('touchend', this.endGesture.bind(this));
-    window.addEventListener('mouseup', this.endGesture.bind(this));
-  }
-
-  pointerStart(event) {
-    this.moving = true;
-    if (event.type === 'touchstart') {
-      this.pointerInitial.x = event.touches[0].clientX;
-      this.pointerInitial.y = event.touches[0].clientY;
-    } else if (event.type === 'mousedown') {
-      this.pointerInitial.x = event.clientX;
-      this.pointerInitial.y = event.clientY;
+    constructor() {
+        this.moving = false;
+        this.pointer = { x: 0, y: 0 };
+        this.pointerInitial = { x: 0, y: 0 };
+        this.setupListeners();
     }
-  }
 
-  pointerMove(event) {
-    event.preventDefault();
-    if (this.moving) {
-      let currentX = 0;
-      let currentY = 0;
-      if (event.type === 'touchmove') {
-        currentX = event.touches[0].clientX;
-        currentY = event.touches[0].clientY;
-      } else if (event.type === 'mousemove') {
-        currentX = event.clientX;
-        currentY = event.clientY;
-      }
-      this.pointer.x = currentX - this.pointerInitial.x;
-      this.pointer.y = currentY - this.pointerInitial.y;
+    setupListeners() {
+        canvas.addEventListener('touchstart', this.pointerStart.bind(this), { passive: false });
+        canvas.addEventListener('mousedown', this.pointerStart.bind(this));
+        window.addEventListener('touchmove', this.pointerMove.bind(this), { passive: false });
+        window.addEventListener('mousemove', this.pointerMove.bind(this));
+        window.addEventListener('touchend', this.endGesture.bind(this));
+        window.addEventListener('mouseup', this.endGesture.bind(this));
     }
-  }
 
-  endGesture() {
-    this.moving = false;
-    this.pointer.x = 0;
-    this.pointer.y = 0;
-  }
+    pointerStart(event) {
+        this.moving = true;
+        if (event.type === 'touchstart') {
+            this.pointerInitial.x = event.touches[0].clientX;
+            this.pointerInitial.y = event.touches[0].clientY;
+        } else {
+            this.pointerInitial.x = event.clientX;
+            this.pointerInitial.y = event.clientY;
+        }
+    }
 
-  getPointer() {
-    return this.pointer;
-  }
+    pointerMove(event) {
+        if (!this.moving) return;
+        
+        event.preventDefault();
+        
+        let currentX, currentY;
+        if (event.type === 'touchmove') {
+            currentX = event.touches[0].clientX;
+            currentY = event.touches[0].clientY;
+        } else {
+            currentX = event.clientX;
+            currentY = event.clientY;
+        }
+
+        this.pointer.x = currentX - this.pointerInitial.x;
+        this.pointer.y = currentY - this.pointerInitial.y;
+    }
+
+    endGesture() {
+        this.moving = false;
+        // Smoothly reset pointer position
+        const resetPointer = () => {
+            this.pointer.x *= 0.85;
+            this.pointer.y *= 0.85;
+            if (Math.abs(this.pointer.x) > 0.1 || Math.abs(this.pointer.y) > 0.1) {
+                requestAnimationFrame(resetPointer);
+            } else {
+                this.pointer.x = 0;
+                this.pointer.y = 0;
+            }
+        };
+        requestAnimationFrame(resetPointer);
+    }
+
+    getPointer() {
+        return this.pointer;
+    }
 }
 
-// Initialize pointer handler
+// Initialize controllers
+const motionController = new MotionController();
 const pointerHandler = new PointerHandler();
 
+// Layer offset calculation
+function getOffset(layer) {
+    const pointer = pointerHandler.getPointer();
+    const motion = motionController.getMotion();
+
+    const touchMultiplier = 0.15;
+    const motionMultiplier = 2.5;
+
+    return {
+        x: (pointer.x * layer.zIndex * touchMultiplier) + (motion.x * layer.zIndex * motionMultiplier),
+        y: (pointer.y * layer.zIndex * touchMultiplier) + (motion.y * layer.zIndex * motionMultiplier)
+    };
+}
+
+// Main render function
+function drawCanvas() {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+
+    const motion = motionController.getMotion();
+    const pointer = pointerHandler.getPointer();
+
+    // Calculate rotation with enhanced motion effect
+    const rotateX = pointer.y * -0.15 + motion.y * -2;
+    const rotateY = pointer.x * 0.15 + motion.x * 2;
+
+    // Apply hardware-accelerated transform
+    canvas.style.transform = `perspective(1000px) translate3d(0,0,0) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
+    canvas.style.webkitTransform = canvas.style.transform;
+
+    // Draw layers
+    layerList.forEach(layer => {
+        layer.position = getOffset(layer);
+        context.globalCompositeOperation = layer.blend || 'normal';
+        context.globalAlpha = layer.opacity;
+        context.drawImage(layer.image, layer.position.x, layer.position.y);
+    });
+
+    requestAnimationFrame(drawCanvas);
+}
+
 // Image loading
-layerList.forEach((layer) => {
-  layer.image.onload = function () {
-    loadCounter++;
-    if (loadCounter >= layerList.length) {
-      hideLoading();
-      requestAnimationFrame(drawCanvas);
-    }
-  };
-  layer.image.src = layer.src;
+layerList.forEach(layer => {
+    layer.image.onload = () => {
+        loadCounter++;
+        if (loadCounter >= layerList.length) {
+            loadingScreen.classList.add('hidden');
+            requestAnimationFrame(drawCanvas);
+        }
+    };
+    layer.image.src = layer.src;
 });
 
-function hideLoading() {
-  loadingScreen.classList.add('hidden');
-}
+// Handle visibility changes
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        motionController.resetMotion();
+    }
+});
 
-function getOffset(layer) {
-  const pointer = pointerHandler.getPointer();
-  const motion = motionController.getMotion();
+// Handle window resize
+window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+});
 
-  const touchMultiplier = 0.1;
-  const touchOffsetX = pointer.x * layer.zIndex * touchMultiplier;
-  const touchOffsetY = pointer.y * layer.zIndex * touchMultiplier;
-
-  const motionMultiplier = 1;
-  const motionOffsetX = motion.x * layer.zIndex * motionMultiplier;
-  const motionOffsetY = motion.y * layer.zIndex * motionMultiplier;
-
-  return {
-    x: touchOffsetX + motionOffsetX,
-    y: touchOffsetY + motionOffsetY
-  };
-}
-
-function drawCanvas() {
-  context.clearRect(0, 0, canvas.width, canvas.height);
-
-  const pointer = pointerHandler.getPointer();
-  const motion = motionController.getMotion();
-
-  // Calculate canvas rotation
-  const rotateX = pointer.y * -0.15 + motion.y * -1.2;
-  const rotateY = pointer.x * 0.15 + motion.x * 1.2;
-
-  // Apply transform with hardware acceleration
-  canvas.style.transform = `translate3d(0,0,0) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
-
-  // Draw layers
-  layerList.forEach((layer) => {
-    layer.position = getOffset(layer);
-    context.globalCompositeOperation = layer.blend || 'normal';
-    context.globalAlpha = layer.opacity;
-    context.drawImage(layer.image, layer.position.x, layer.position.y);
-  });
-
-  requestAnimationFrame(drawCanvas);
-}
+// Initial size setup
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
